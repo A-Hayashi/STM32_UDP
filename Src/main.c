@@ -246,6 +246,19 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+void udp_receive_callback(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
+	uint8_t buf[100];
+	memset(buf, 0, sizeof(buf));
+	memcpy((void*) buf, (const void*) p->payload, p->len);
+
+	if(strcmp(buf, "12345")==0){
+		HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
+	}
+
+	pbuf_free(p);		// Free the p buffer
+	//udp_transmit(upcb, addr, udp2_tx_data, udp2_tx_len);
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -268,6 +281,7 @@ void StartDefaultTask(void const *argument) {
 
 	struct udp_pcb *my_udp = udp_new();
 	udp_connect(my_udp, &PC_IPADDR, 55151);
+	udp_recv(my_udp, udp_receive_callback, NULL);
 	struct pbuf *udp_buffer = NULL;
 
 	/* Infinite loop */
