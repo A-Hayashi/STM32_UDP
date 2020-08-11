@@ -22,6 +22,8 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "lwip.h"
+#include "string.h"
+#include "lwip/udp.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -30,7 +32,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+struct udp_pcb;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -56,7 +58,10 @@ static void MX_GPIO_Init(void);
 void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
-
+static void udp_receive_callback(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, u16_t port);
+static void udp_transmit(struct udp_pcb *upcb, u8_t* buf, u16_t len);
+static void udp_send_nack(struct udp_pcb *upcb);
+static void udp_send_ack(struct udp_pcb *upcb);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -246,17 +251,95 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void udp_receive_callback(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
-	uint8_t buf[100];
+GPIO_TypeDef *GPIO_Table[] = {GPIOA, GPIOB, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG, GPIOH, GPIOI, GPIOJ, GPIOK};
+
+static void udp_receive_callback(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
+	char buf[100];
+	char buf2[2];
 	memset(buf, 0, sizeof(buf));
+	memset(buf2, 0, sizeof(buf2));
 	memcpy((void*) buf, (const void*) p->payload, p->len);
 
-	if(strcmp(buf, "12345")==0){
-		HAL_GPIO_TogglePin(LD3_GPIO_Port, LD3_Pin);
-	}
+	do{
+		if((buf[0]=='W') && (buf[1]=='D')){
+			int portIdx = buf[2] - 'A';
+			if((portIdx < 0) || (portIdx >= sizeof(GPIO_Table)/sizeof(GPIO_Table[0]))){
+				udp_send_nack(upcb);
+				break;
+			}
+
+			buf2[0] = buf[3];
+			int pin = strtol(buf2, NULL, 16);
+
+			buf2[0] = buf[4];
+			int val = strtol(buf2, NULL, 16);
+			if(val > 1){
+				udp_send_nack(upcb);
+				break;
+			}
+
+			HAL_GPIO_WritePin(GPIO_Table[portIdx], 1 << pin, val);
+
+			u8_t sendBuf[2] = {0x00, 0x00};
+			sendBuf[0] = HAL_GPIO_ReadPin(GPIO_Table[portIdx], 1 << pin) + '0';
+			udp_transmit(upcb, sendBuf, sizeof(sendBuf));
+		}else if((buf[0]=='R') && (buf[1]=='D')){
+			int portIdx = buf[2] - 'A';
+			if((portIdx < 0) || (portIdx >= sizeof(GPIO_Table)/sizeof(GPIO_Table[0]))){
+				udp_send_nack(upcb);
+				break;
+			}
+
+			buf2[0] = buf[3];
+			int pin = strtol(buf2, NULL, 16);
+
+			u8_t sendBuf[2] = {0x00, 0x00};
+			sendBuf[0] = HAL_GPIO_ReadPin(GPIO_Table[portIdx], 1 << pin) + '0';
+			udp_transmit(upcb, sendBuf, sizeof(sendBuf));
+		}else{
+			udp_send_nack(upcb);
+		}
+	}while(0);
 
 	pbuf_free(p);		// Free the p buffer
-	//udp_transmit(upcb, addr, udp2_tx_data, udp2_tx_len);
+}
+
+static void udp_transmit(struct udp_pcb *pcb, u8_t* buf, u16_t len)
+{
+	struct pbuf *udp_buffer = NULL;
+
+	udp_buffer = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
+	if (udp_buffer != NULL) {
+		memcpy(udp_buffer->payload, buf, len);
+		udp_send(pcb, udp_buffer);
+		pbuf_free(udp_buffer);
+	}
+}
+
+static void udp_send_nack(struct udp_pcb *upcb)
+{
+	struct pbuf *udp_buffer = NULL;
+	u8_t sendBuf[]= "nack";
+
+	udp_buffer = pbuf_alloc(PBUF_TRANSPORT, sizeof(sendBuf), PBUF_RAM);
+	if (udp_buffer != NULL) {
+		memcpy(udp_buffer->payload, sendBuf, sizeof(sendBuf));
+		udp_send(upcb, udp_buffer);
+		pbuf_free(udp_buffer);
+	}
+}
+
+static void udp_send_ack(struct udp_pcb *upcb)
+{
+	struct pbuf *udp_buffer = NULL;
+	u8_t sendBuf[]= "ack";
+
+	udp_buffer = pbuf_alloc(PBUF_TRANSPORT, sizeof(sendBuf), PBUF_RAM);
+	if (udp_buffer != NULL) {
+		memcpy(udp_buffer->payload, sendBuf, sizeof(sendBuf));
+		udp_send(upcb, udp_buffer);
+		pbuf_free(udp_buffer);
+	}
 }
 
 /* USER CODE END 4 */
@@ -290,7 +373,7 @@ void StartDefaultTask(void const *argument) {
 		udp_buffer = pbuf_alloc(PBUF_TRANSPORT, strlen(message), PBUF_RAM);
 		if (udp_buffer != NULL) {
 			memcpy(udp_buffer->payload, message, strlen(message));
-			udp_send(my_udp, udp_buffer);
+//			udp_send(my_udp, udp_buffer);
 			pbuf_free(udp_buffer);
 		}
 	}
